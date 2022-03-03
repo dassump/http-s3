@@ -58,7 +58,7 @@ func main() {
 
 		use_ssl, err := strconv.ParseBool(s3_secure)
 		if err != nil {
-			log.Panic(err)
+			return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 		}
 
 		mc, err := minio.New(s3_endpoint, &minio.Options{
@@ -66,12 +66,12 @@ func main() {
 			Secure: use_ssl,
 		})
 		if err != nil {
-			log.Panic(err)
+			return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 		}
 
 		ok, err := mc.BucketExists(ctx, s3_bucket)
 		if err != nil && !ok {
-			log.Panic(err)
+			return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 		}
 
 		temp, err := os.CreateTemp("", "")
@@ -82,12 +82,12 @@ func main() {
 
 		key, err := url.PathUnescape(c.OriginalURL())
 		if err != nil {
-			log.Panic(err)
+			return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 		}
 
 		err = mc.FGetObject(ctx, s3_bucket, key, temp.Name(), minio.GetObjectOptions{})
 		if err != nil {
-			log.Panic(err)
+			return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 		}
 
 		filename := strings.Split(key, "/")[len(strings.Split(key, "/"))-1]
