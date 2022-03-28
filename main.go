@@ -71,11 +71,11 @@ func main() {
 			return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 		}
 
-		ok, err := mc.BucketExists(ctx, s3_bucket)
+		bucket, err := mc.BucketExists(ctx, s3_bucket)
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 		}
-		if !ok {
+		if !bucket {
 			return fiber.ErrInternalServerError
 		}
 
@@ -93,10 +93,10 @@ func main() {
 		defer os.Remove(temp.Name())
 
 		stat, _ := mc.StatObject(ctx, s3_bucket, key, minio.GetObjectOptions{})
-		objects := mc.ListObjects(ctx, s3_bucket, minio.ListObjectsOptions{Prefix: key, Recursive: true})
+		list := mc.ListObjects(ctx, s3_bucket, minio.ListObjectsOptions{Prefix: key + "/", Recursive: true})
 
 		var keys []string
-		for v := range objects {
+		for v := range list {
 			keys = append(keys, v.Key)
 		}
 
@@ -113,10 +113,6 @@ func main() {
 			zipw := zip.NewWriter(temp)
 
 			for _, k := range keys {
-				if !strings.HasPrefix(k, key[1:]) {
-					continue
-				}
-
 				obj, err := mc.GetObject(ctx, s3_bucket, k, minio.GetObjectOptions{})
 				if err != nil {
 					return fiber.NewError(fiber.StatusInternalServerError, err.Error())
@@ -132,7 +128,9 @@ func main() {
 				}
 			}
 
-			zipw.Close()
+			if err := zipw.Close(); err != nil {
+				return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+			}
 
 			return c.Download(temp.Name(), filename+".zip")
 
