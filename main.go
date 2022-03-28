@@ -1,8 +1,10 @@
 package main
 
 import (
+	"archive/zip"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -24,11 +26,11 @@ import (
 )
 
 const (
-	app_name = "http-s3"
-	app_addr = "0.0.0.0"
-	app_port = 3000
-	app_idle = 30
-	app_fork = true
+	app_name    = "http-s3"
+	app_addr    = "0.0.0.0"
+	app_port    = 3000
+	app_timeout = 30
+	app_fork    = true
 )
 
 var (
@@ -42,7 +44,7 @@ var (
 func main() {
 	app := fiber.New(fiber.Config{
 		AppName:     app_name,
-		IdleTimeout: app_idle,
+		IdleTimeout: app_timeout,
 		Prefork:     app_fork,
 	})
 
@@ -53,7 +55,7 @@ func main() {
 	)
 
 	app.Get("*", func(c *fiber.Ctx) error {
-		ctx, cancel := context.WithTimeout(context.Background(), app_idle*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), app_timeout*time.Second)
 		defer cancel()
 
 		use_ssl, err := strconv.ParseBool(s3_secure)
@@ -70,9 +72,19 @@ func main() {
 		}
 
 		ok, err := mc.BucketExists(ctx, s3_bucket)
-		if err != nil && !ok {
+		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 		}
+		if !ok {
+			return fiber.ErrInternalServerError
+		}
+
+		key, err := url.PathUnescape(c.OriginalURL())
+		if err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		}
+
+		filename := strings.Split(key, "/")[len(strings.Split(key, "/"))-1]
 
 		temp, err := os.CreateTemp("", "")
 		if err != nil {
@@ -80,19 +92,53 @@ func main() {
 		}
 		defer os.Remove(temp.Name())
 
-		key, err := url.PathUnescape(c.OriginalURL())
-		if err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+		stat, _ := mc.StatObject(ctx, s3_bucket, key, minio.GetObjectOptions{})
+		objects := mc.ListObjects(ctx, s3_bucket, minio.ListObjectsOptions{Prefix: key, Recursive: true})
+
+		var keys []string
+		for v := range objects {
+			keys = append(keys, v.Key)
 		}
 
-		err = mc.FGetObject(ctx, s3_bucket, key, temp.Name(), minio.GetObjectOptions{})
-		if err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+		switch {
+		case len(stat.Key) > 0:
+			err = mc.FGetObject(ctx, s3_bucket, stat.Key, temp.Name(), minio.GetObjectOptions{})
+			if err != nil {
+				return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+			}
+
+			return c.Download(temp.Name(), filename)
+
+		case len(keys) > 0:
+			zipw := zip.NewWriter(temp)
+
+			for _, k := range keys {
+				if !strings.HasPrefix(k, key[1:]) {
+					continue
+				}
+
+				obj, err := mc.GetObject(ctx, s3_bucket, k, minio.GetObjectOptions{})
+				if err != nil {
+					return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+				}
+
+				iow, err := zipw.Create(k)
+				if err != nil {
+					return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+				}
+
+				if _, err := io.Copy(iow, obj); err != nil {
+					return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+				}
+			}
+
+			zipw.Close()
+
+			return c.Download(temp.Name(), filename+".zip")
+
+		default:
+			return fiber.ErrNotFound
 		}
-
-		filename := strings.Split(key, "/")[len(strings.Split(key, "/"))-1]
-
-		return c.Download(temp.Name(), filename)
 	})
 
 	go func() {
