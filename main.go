@@ -23,11 +23,10 @@ import (
 )
 
 const (
-	app_name    = "http-s3"
-	app_addr    = "0.0.0.0"
-	app_port    = 3000
-	app_timeout = 120
-	app_fork    = true
+	app_name = "http-s3"
+	app_addr = "0.0.0.0"
+	app_port = 3000
+	app_fork = true
 )
 
 var (
@@ -40,9 +39,8 @@ var (
 
 func main() {
 	app := fiber.New(fiber.Config{
-		AppName:     app_name,
-		IdleTimeout: app_timeout,
-		Prefork:     app_fork,
+		AppName: app_name,
+		Prefork: app_fork,
 	})
 
 	app.Use(
