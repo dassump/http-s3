@@ -118,6 +118,7 @@ func main() {
 				if _, err := io.Copy(iow, obj); err != nil {
 					return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 				}
+				obj.Close()
 			}
 
 			if err := zipw.Close(); err != nil {
