@@ -71,7 +71,7 @@ func main() {
 			return fiber.NewError(fiber.StatusBadRequest, err.Error())
 		}
 
-		filename := strings.Split(key, "/")[len(strings.Split(key, "/"))-1]
+		folder, file := path.Split(key)
 
 		temp, err := os.CreateTemp("", "")
 		if err != nil {
@@ -79,27 +79,35 @@ func main() {
 		}
 		defer os.Remove(temp.Name())
 
-		stat, _ := mc.StatObject(c.Context(), s3_bucket, key, minio.GetObjectOptions{})
-		list := mc.ListObjects(c.Context(), s3_bucket, minio.ListObjectsOptions{Prefix: key + "/", Recursive: true})
-
-		var keys []string
-		for v := range list {
-			keys = append(keys, v.Key)
-		}
-
 		switch {
-		case len(stat.Key) > 0:
+		case len(file) > 0:
+			stat, err := mc.StatObject(c.Context(), s3_bucket, key, minio.GetObjectOptions{})
+			if err != nil {
+				return fiber.ErrNotFound
+			}
+
 			err = mc.FGetObject(c.Context(), s3_bucket, stat.Key, temp.Name(), minio.GetObjectOptions{})
 			if err != nil {
 				return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 			}
 
-			return c.Download(temp.Name(), filename)
+			return c.Download(temp.Name(), file)
 
-		case len(keys) > 0:
+		case len(folder) > 1:
+			list := mc.ListObjects(c.Context(), s3_bucket, minio.ListObjectsOptions{Prefix: folder, Recursive: true})
+
+			var files []string
+			for v := range list {
+				files = append(files, v.Key)
+			}
+
+			if len(files) < 1 {
+				return fiber.ErrNotFound
+			}
+
 			zipw := zip.NewWriter(temp)
 
-			for _, k := range keys {
+			for _, k := range files {
 				obj, err := mc.GetObject(c.Context(), s3_bucket, k, minio.GetObjectOptions{})
 				if err != nil {
 					return fiber.NewError(fiber.StatusInternalServerError, err.Error())
@@ -121,11 +129,13 @@ func main() {
 				obj.Close()
 			}
 
+			_, file = path.Split(path.Clean(folder))
+
 			if err := zipw.Close(); err != nil {
 				return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 			}
 
-			return c.Download(temp.Name(), filename+".zip")
+			return c.Download(temp.Name(), file+".zip")
 
 		default:
 			return fiber.ErrNotFound
